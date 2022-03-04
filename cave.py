@@ -1,11 +1,22 @@
+import joblib
 import numpy as np
-from matplotlib import pyplot as plt
-from matplotlib.animation import FuncAnimation
+import plotly.graph_objects as go
 from scipy.signal import convolve2d
 from tqdm import tqdm
 
 from path import Path
 
+layout = dict(
+    autosize=False,
+    width=450,
+    height=450,
+    xaxis_visible=False,
+    yaxis_visible=False,
+    xaxis_range=[0,400-1],
+    yaxis_range=[0,400-1],
+    showlegend=False,
+    margin=dict(l=0, r=0, b=0, t=0, pad=0)
+)
 
 class Cave:
     def __init__(
@@ -117,91 +128,73 @@ class Cave:
             x = moving_average(np.array(self.path_hist, dtype=np.double)[:, 0], n=n)
             self.smooth_path.append(np.array([x, y]).transpose())
 
-    def animation(self, size=(6, 6)):
-        def anim_step(i):
-            line.set_data(self.map_hist[i])
-            ax.set_title(f'{i}/{self.steps}', fontsize=10)
-            ax.set_axis_off()
-            return line
-
-        fig, ax = plt.subplots(figsize=size)
-        line = plt.imshow(self.map_hist[0], cmap='magma')
-
-        return FuncAnimation(fig, anim_step,
-                             frames=self.steps, interval=self.interval)
-
-    def show(self, size=(8, 8)):
-        fig, ax = plt.subplots(figsize=size)
-
-        # ax[0].imshow(self.path, cmap='magma') #  jet
-        # ax[1].imshow(self.map, cmap='magma')
-        # ax[2].imshow(self.hood, cmap='magma')
-        # ax[3].imshow(self.mono, cmap='gray')
+    def show(self, save=False, size=400):
+        fig = go.Figure()
 
         length = len(self.smooth_path)
         start = 1.4
         end = 0.01
         width = np.arange(start, end, (end-start)/length)
         paths = self.smooth_path
-        # ax_counter = 0
-        # axs = ax.flatten()
+
+        multi_size = size/400
+        self.size = size
+
+        width *= multi_size
 
         points = True
-        reverse = False
         delta = 50
-        p_size = 7500
+        p_size = (4*multi_size, 90*multi_size)
 
-        self.show_final(ax, paths, width, delta=delta,
-                        p_size=p_size, points=points, reverse=reverse)
+        self.show_final(fig, paths, width, delta=delta, p_size=p_size, points=points)
 
-        # for a in axs:
-        #    a.set_axis_off()
-        ax.set_axis_off()
+        save_layout = layout.copy()
+        save_layout.update(dict(width=size, height=size))
+        fig.update_layout(**save_layout)
+        
+        if not save:
+            fig.update_layout(**save_layout)
+            fig.show()
+        else:
+            fig.update_layout(**save_layout)
 
-        plt.subplots_adjust(wspace=0, hspace=0)
-        plt.savefig(f'img/{hash(str(self.path_hist))}.png', dpi=300)
+            hash_name = hex(abs(hash(self)))[2:]
+            self.dump(hash_name)
+            fig.write_image(f'img/{hash_name}.png')
+
+    def show_final(self, fig, paths, widths, delta=50, p_size=(4, 90), points=True,
+                   mask=True):
+        for path, w in zip(paths, widths):
+            fig.add_trace(go.Scatter(x=path[:, 1], y=path[:, 0], mode='lines',
+                line=dict(color='rgb(0,0,0)', width=w)))
+
+        if points:
+            fig.add_trace(go.Scatter(x=self.smooth_path[0][::delta, 1], 
+                                        y=self.smooth_path[0][::delta, 0],
+                                        mode='markers',
+                                        marker=dict(color='rgb(0,0,0)',
+                                                    size=p_size[0])))
+        if mask:
+            fig.add_trace(go.Scatter(x=[200], y=[200], mode='markers',
+                          marker=dict(color='rgb(0.737,0,0.176)',  size=p_size[1])))
+
+    def show_map(self):
+        fig = go.Figure(data=go.Heatmap(z=self.map, colorscale='greys'))
+        fig.update_layout(**layout)
+        fig.update_traces(showscale=False)
         fig.show()
 
-    def show_final(self, ax, paths, widths, delta=50, p_size=5000, name='-',
-                   points=True, mask=True, reverse=True, title=False):
-        if reverse:
-            for path, w in list(zip(paths, reversed(widths))):
-                ax.plot(*reversed((path).transpose()),
-                        linewidth=w,
-                        color=self.smooth_color)
-            if points:
-                ax.scatter(*reversed(paths[-1][::delta].transpose()),
-                           s=self.point_size,
-                           color=self.smooth_color)
-        else:
-            for path, w in list(zip(paths, widths)):
-                ax.plot(*reversed(path.transpose()),
-                        linewidth=w,
-                        color=self.smooth_color)
-            if points:
-                ax.scatter(*reversed(paths[0][::delta].transpose()),
-                           s=self.point_size,
-                           color=self.smooth_color)
+    def show_path(self):
+        fig = go.Figure(data=go.Heatmap(z=self.path, colorscale='greys'))
+        fig.update_layout(**layout)
+        fig.update_traces(showscale=False)
+        fig.show()
 
-        if mask:
-            ax.scatter([self.size/2], [self.size/2], s=p_size, color='black')
-        if title:
-            ax.set_title(f'D: {delta}, Ps:{points}, R:{reverse}, ' +
-                         f'W:{np.around(widths, 2)}\nname: {name}', fontsize=10)
-        ax.set_aspect('equal')
-        ax.invert_yaxis()
-        ax.set_xlim([0, self.size])
-        ax.set_ylim([self.size, 0])
+    def dump(self, name):
+        joblib.dump(self, f'caves/{name}.cave')
 
-    def show_map(self, size=(4, 4)):
-        _, ax = plt.subplots(figsize=size)
-        ax.imshow(self.map, cmap='magma')
-        plt.show()
-
-    def show_path(self, size=(4, 4)):
-        _, ax = plt.subplots(figsize=size)
-        ax.imshow(self.path, cmap='magma')
-        plt.show()
+    def load(self, name):
+        self.__dict__.update(joblib.load(f'caves/{name}.cave').__dict__)
 
 
 def moving_average(a, n=20):
